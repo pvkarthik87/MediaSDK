@@ -54,14 +54,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     private static final int MENU_GROUP_TRACKS = 1;
     private static final int ID_OFFSET = 2;
 
-    private static final CookieManager defaultCookieManager;
-
     private static final String TAG = "PlayerActivity";
-
-    static {
-        defaultCookieManager = new CookieManager();
-        defaultCookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
-    }
 
     private MediaController mediaController;
     private View shutterView;
@@ -117,11 +110,6 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
 
         mediaController = new KeyCompatibleMediaController(this);
         mediaController.setAnchorView(root);
-
-        CookieHandler currentHandler = CookieHandler.getDefault();
-        if (currentHandler != defaultCookieManager) {
-            CookieHandler.setDefault(defaultCookieManager);
-        }
     }
 
     @Override

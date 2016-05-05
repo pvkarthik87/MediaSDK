@@ -37,6 +37,9 @@ import com.google.android.exoplayer.util.PlayerControl;
 import com.google.android.exoplayer.util.Util;
 
 import java.io.IOException;
+import java.net.CookieHandler;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -175,6 +178,13 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     private static final int RENDERER_BUILDING_STATE_BUILDING = 2;
     private static final int RENDERER_BUILDING_STATE_BUILT = 3;
 
+    private static final CookieManager defaultCookieManager;
+
+    static {
+        defaultCookieManager = new CookieManager();
+        defaultCookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
+    }
+
     private final RendererBuilder rendererBuilder;
     private final ExoPlayer player;
     private final PlayerControl playerControl;
@@ -210,6 +220,11 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
         // Disable text initially.
         player.setSelectedTrack(TYPE_TEXT, TRACK_DISABLED);
+
+        CookieHandler currentHandler = CookieHandler.getDefault();
+        if (currentHandler != defaultCookieManager) {
+            CookieHandler.setDefault(defaultCookieManager);
+        }
     }
 
     public PlayerControl getPlayerControl() {
