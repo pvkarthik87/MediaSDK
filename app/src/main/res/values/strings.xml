@@ -1,5 +1,5 @@
 <resources xmlns:xliff="http://schemas.android.com/tools">
-    <string name="app_name">MediaSDK</string>
+    <string name="app_name">MediaSDK Demo</string>
 
 
     <string name="error_drm_not_supported">Protected content not supported on API levels below 18</string>

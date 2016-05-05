@@ -30,6 +30,7 @@ import com.google.android.exoplayer.TrackRenderer;
 import com.google.android.exoplayer.audio.AudioCapabilities;
 import com.google.android.exoplayer.chunk.ChunkSampleSource;
 import com.google.android.exoplayer.chunk.ChunkSource;
+import com.google.android.exoplayer.chunk.FormatEvaluator;
 import com.google.android.exoplayer.chunk.FormatEvaluator.AdaptiveEvaluator;
 import com.google.android.exoplayer.dash.DashChunkSource;
 import com.google.android.exoplayer.dash.DefaultDashTrackSelector;
@@ -52,6 +53,7 @@ import com.google.android.exoplayer.upstream.UriDataSource;
 import com.google.android.exoplayer.util.ManifestFetcher;
 import com.google.android.exoplayer.util.Util;
 import com.kar.mediaservice.MediaSDKService;
+import com.kar.mediaservice.utils.MaxFixedEvaluator;
 
 import java.io.IOException;
 
@@ -78,6 +80,8 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
   private final MediaDrmCallback drmCallback;
 
   private AsyncRendererBuilder currentAsyncBuilder;
+  private long mMaxBitrate;
+  private boolean mIsAdaptive;
 
   public DashRendererBuilder(Context context, String userAgent, String url,
       MediaDrmCallback drmCallback) {
@@ -85,11 +89,24 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
     this.userAgent = userAgent;
     this.url = url;
     this.drmCallback = drmCallback;
+    mIsAdaptive = true;
+  }
+
+  public DashRendererBuilder(Context context, String userAgent, String url,
+                              MediaDrmCallback drmCallback, long maxBitrate) {
+    this(context, userAgent, url, drmCallback);
+    mMaxBitrate = maxBitrate;
+    mIsAdaptive = false;
   }
 
   @Override
   public void buildRenderers(MediaSDKService player) {
-    currentAsyncBuilder = new AsyncRendererBuilder(context, userAgent, url, drmCallback, player);
+    if(mIsAdaptive) {
+      currentAsyncBuilder = new AsyncRendererBuilder(context, userAgent, url, drmCallback, player);
+    }
+    else {
+      currentAsyncBuilder = new AsyncRendererBuilder(context, userAgent, url, drmCallback, player, mMaxBitrate);
+    }
     currentAsyncBuilder.init();
   }
 
@@ -114,6 +131,9 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
     private boolean canceled;
     private MediaPresentationDescription manifest;
     private long elapsedRealtimeOffset;
+    private long mMaxBitrate;
+    private boolean mIsAdaptive;
+
 
     public AsyncRendererBuilder(Context context, String userAgent, String url,
                                 MediaDrmCallback drmCallback, MediaSDKService player) {
@@ -124,7 +144,15 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
       MediaPresentationDescriptionParser parser = new MediaPresentationDescriptionParser();
       manifestDataSource = new DefaultUriDataSource(context, userAgent);
       manifestFetcher = new ManifestFetcher<>(url, manifestDataSource, parser);
+      mIsAdaptive = true;
     }
+
+    public AsyncRendererBuilder(Context context, String userAgent, String url,
+                                MediaDrmCallback drmCallback, MediaSDKService player, long maxBitrate) {
+      this(context, userAgent, url, drmCallback, player);
+      mIsAdaptive = false;
+      mMaxBitrate = maxBitrate;
+     }
 
     public void init() {
       manifestFetcher.singleLoad(player.getMainHandler().getLooper(), this);
@@ -199,12 +227,12 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
       if (hasContentProtection) {
         if (Util.SDK_INT < 18) {
           player.onRenderersError(
-              new UnsupportedDrmException(UnsupportedDrmException.REASON_UNSUPPORTED_SCHEME));
+                  new UnsupportedDrmException(UnsupportedDrmException.REASON_UNSUPPORTED_SCHEME));
           return;
         }
         try {
           drmSessionManager = StreamingDrmSessionManager.newWidevineInstance(
-              player.getPlaybackLooper(), drmCallback, null, player.getMainHandler(), player);
+                  player.getPlaybackLooper(), drmCallback, null, player.getMainHandler(), player);
           filterHdContent = getWidevineSecurityLevel(drmSessionManager) != SECURITY_LEVEL_1;
         } catch (UnsupportedDrmException e) {
           player.onRenderersError(e);
@@ -215,38 +243,38 @@ public class DashRendererBuilder implements MediaSDKService.RendererBuilder {
       // Build the video renderer.
       DataSource videoDataSource = new DefaultUriDataSource(context, bandwidthMeter, userAgent);
       ChunkSource videoChunkSource = new DashChunkSource(manifestFetcher,
-          DefaultDashTrackSelector.newVideoInstance(context, true, filterHdContent),
-          videoDataSource, new AdaptiveEvaluator(bandwidthMeter), LIVE_EDGE_LATENCY_MS,
-          elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_VIDEO);
+              DefaultDashTrackSelector.newVideoInstance(context, true, filterHdContent),
+              videoDataSource, (mIsAdaptive) ? new AdaptiveEvaluator(bandwidthMeter) : new MaxFixedEvaluator(mMaxBitrate), LIVE_EDGE_LATENCY_MS,
+              elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_VIDEO);
       ChunkSampleSource videoSampleSource = new ChunkSampleSource(videoChunkSource, loadControl,
-          VIDEO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
+              VIDEO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
               MediaSDKService.TYPE_VIDEO);
       TrackRenderer videoRenderer = new MediaCodecVideoTrackRenderer(context, videoSampleSource,
-          MediaCodecSelector.DEFAULT, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT, 5000,
-          drmSessionManager, true, mainHandler, player, 50);
+              MediaCodecSelector.DEFAULT, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT, 5000,
+              drmSessionManager, true, mainHandler, player, 50);
 
       // Build the audio renderer.
       DataSource audioDataSource = new DefaultUriDataSource(context, bandwidthMeter, userAgent);
       ChunkSource audioChunkSource = new DashChunkSource(manifestFetcher,
-          DefaultDashTrackSelector.newAudioInstance(), audioDataSource, null, LIVE_EDGE_LATENCY_MS,
-          elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_AUDIO);
+              DefaultDashTrackSelector.newAudioInstance(), audioDataSource, null, LIVE_EDGE_LATENCY_MS,
+              elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_AUDIO);
       ChunkSampleSource audioSampleSource = new ChunkSampleSource(audioChunkSource, loadControl,
-          AUDIO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
+              AUDIO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
               MediaSDKService.TYPE_AUDIO);
       TrackRenderer audioRenderer = new MediaCodecAudioTrackRenderer(audioSampleSource,
-          MediaCodecSelector.DEFAULT, drmSessionManager, true, mainHandler, player,
-          AudioCapabilities.getCapabilities(context), AudioManager.STREAM_MUSIC);
+              MediaCodecSelector.DEFAULT, drmSessionManager, true, mainHandler, player,
+              AudioCapabilities.getCapabilities(context), AudioManager.STREAM_MUSIC);
 
       // Build the text renderer.
       DataSource textDataSource = new DefaultUriDataSource(context, bandwidthMeter, userAgent);
       ChunkSource textChunkSource = new DashChunkSource(manifestFetcher,
-          DefaultDashTrackSelector.newTextInstance(), textDataSource, null, LIVE_EDGE_LATENCY_MS,
-          elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_TEXT);
+              DefaultDashTrackSelector.newTextInstance(), textDataSource, null, LIVE_EDGE_LATENCY_MS,
+              elapsedRealtimeOffset, mainHandler, player, MediaSDKService.TYPE_TEXT);
       ChunkSampleSource textSampleSource = new ChunkSampleSource(textChunkSource, loadControl,
-          TEXT_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
+              TEXT_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, mainHandler, player,
               MediaSDKService.TYPE_TEXT);
       TrackRenderer textRenderer = new TextTrackRenderer(textSampleSource, player,
-          mainHandler.getLooper());
+              mainHandler.getLooper());
 
       // Invoke the callback.
       TrackRenderer[] renderers = new TrackRenderer[MediaSDKService.RENDERER_COUNT];

@@ -17,7 +17,6 @@ import android.view.View;
 import android.view.accessibility.CaptioningManager;
 import android.widget.Toast;
 
-import com.google.android.exoplayer.AspectRatioFrameLayout;
 import com.google.android.exoplayer.ExoPlaybackException;
 import com.google.android.exoplayer.ExoPlayer;
 import com.google.android.exoplayer.MediaCodecTrackRenderer;
@@ -61,7 +60,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     private SurfaceView surfaceView;
     private SubtitleLayout subtitleLayout;
 
-    private MediaSDKService player;
+    private MediaSDKService mMediaSDKService;
     private boolean playerNeedsPrepare;
 
     private long playerPosition;
@@ -78,17 +77,6 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_player);
         root = findViewById(R.id.root);
-        /*MediaDrmCallback mediaDrmCallback = null;
-        if(contentType == Util.TYPE_DASH) {
-            mediaDrmCallback  = new WidevineTestMediaDrmCallback(contentId, provider);
-        }
-        player = new MediaSDKService(PlayerActivity.this);
-        player.addListener(this);
-        player.setCaptionListener(this);
-        player.setMetadataListener(this);
-        player.seekTo(playerPosition);
-        player.startStreaming(Util.TYPE_DASH, Uri.parse(Constants.DASH_SAMPLE_URI), mediaDrmCallback);
-        playerNeedsPrepare = true;*/
         root.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View view, MotionEvent motionEvent) {
@@ -107,19 +95,17 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
                         || keyCode == KeyEvent.KEYCODE_MENU) {
                     return false;
                 }
-                if(player != null) {
-                    return player.onKeyEvent(event);
+                if(mMediaSDKService != null) {
+                    return mMediaSDKService.onKeyEvent(event);
                 }
                 return false;
             }
         });
 
         shutterView = findViewById(R.id.shutter);
-
         videoFrame = (VideoFrameLayout) findViewById(R.id.video_frame);
         surfaceView = (SurfaceView) findViewById(R.id.surface_view);
         surfaceView.getHolder().addCallback(this);
-
         subtitleLayout = (SubtitleLayout) findViewById(R.id.subtitles);
     }
 
@@ -141,7 +127,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     @Override
     public void onResume() {
         super.onResume();
-        if (Util.SDK_INT <= 23 || player == null) {
+        if (Util.SDK_INT <= 23 || mMediaSDKService == null) {
             onShown();
         }
     }
@@ -153,15 +139,11 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
                 inferContentType(contentUri, intent.getStringExtra(CONTENT_EXT_EXTRA)));
         contentId = intent.getStringExtra(CONTENT_ID_EXTRA);
         provider = intent.getStringExtra(PROVIDER_EXTRA);
-        /*contentUri = Uri.parse(Constants.DASH_SAMPLE_URI);
-        contentType = Util.TYPE_DASH;
-        contentId = Constants.DASH_SAMPLE_CONTENT_ID.toLowerCase(Locale.US).replaceAll("\\s", "");
-        provider = "";*/
         configureSubtitleView();
-        if (player == null) {
+        if (mMediaSDKService == null) {
                 preparePlayer(true);
         } else {
-            player.setBackgrounded(false);
+            mMediaSDKService.setBackgrounded(false);
         }
     }
 
@@ -185,7 +167,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
         if (!enableBackgroundAudio) {
             releasePlayer();
         } else {
-            player.setBackgrounded(true);
+            mMediaSDKService.setBackgrounded(true);
         }
         shutterView.setVisibility(View.VISIBLE);
     }
@@ -197,7 +179,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     }
 
     private void preparePlayer(boolean playWhenReady) {
-        if (player == null) {
+        if (mMediaSDKService == null) {
             MediaDrmCallback mediaDrmCallback = null;
             if(contentType == Util.TYPE_DASH) {
                 mediaDrmCallback  = new WidevineTestMediaDrmCallback(contentId, provider);
@@ -208,30 +190,34 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
             else if(contentType == Util.TYPE_SS) {
                 mediaDrmCallback  = new SmoothStreamingTestMediaDrmCallback();
             }
-            player = new MediaSDKService(this);
-            player.setAnchorView(root);
-            player.addListener(this);
-            player.setCaptionListener(this);
-            player.setMetadataListener(this);
-            player.seekTo(playerPosition);
-            //player.startStreaming(Util.TYPE_DASH, Uri.parse(Constants.DASH_SAMPLE_URI), mediaDrmCallback);
-            player.startStreaming(contentType, contentUri, mediaDrmCallback);
+            mMediaSDKService = new MediaSDKService(this);
+            mMediaSDKService.setAnchorView(root);
+            mMediaSDKService.addListener(this);
+            mMediaSDKService.setCaptionListener(this);
+            mMediaSDKService.setMetadataListener(this);
+            mMediaSDKService.seekTo(playerPosition);
+            //mMediaSDKService.setDataSource(Util.TYPE_DASH, Uri.parse(Constants.DASH_SAMPLE_URI), mediaDrmCallback);
+            if(contentId.contains("fixed")) {
+                mMediaSDKService.setAdaptiveEnabled(false);
+                mMediaSDKService.setBitrate(800000);
+            }
+            mMediaSDKService.setDataSource(contentType, contentUri, mediaDrmCallback);
             playerNeedsPrepare = true;
         }
         if (playerNeedsPrepare) {
-            player.prepare();
+            mMediaSDKService.prepare();
             playerNeedsPrepare = false;
             updateButtonVisibilities();
         }
-        player.setSurface(surfaceView.getHolder().getSurface());
-        player.setPlayWhenReady(playWhenReady);
+        mMediaSDKService.setVideoSurface(surfaceView.getHolder().getSurface());
+        mMediaSDKService.setPlayWhenReady(playWhenReady);
     }
 
     private void releasePlayer() {
-        if (player != null) {
-            playerPosition = player.getCurrentPosition();
-            player.release();
-            player = null;
+        if (mMediaSDKService != null) {
+            playerPosition = mMediaSDKService.getCurrentPosition();
+            mMediaSDKService.release();
+            mMediaSDKService = null;
         }
     }
 
@@ -321,7 +307,7 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     }
 
     private boolean haveTracks(int type) {
-        return player != null && player.getTrackCount(type) > 0;
+        return mMediaSDKService != null && mMediaSDKService.getTrackCount(type) > 0;
     }
 
     /*public void showVideoPopup(View v) {
@@ -381,10 +367,10 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     private void configurePopupWithTracks(PopupMenu popup,
                                           final PopupMenu.OnMenuItemClickListener customActionClickListener,
                                           final int trackType) {
-        if (player == null) {
+        if (mMediaSDKService == null) {
             return;
         }
-        int trackCount = player.getTrackCount(trackType);
+        int trackCount = mMediaSDKService.getTrackCount(trackType);
         if (trackCount == 0) {
             return;
         }
@@ -401,10 +387,10 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
         menu.add(MENU_GROUP_TRACKS, DemoPlayer.TRACK_DISABLED + ID_OFFSET, Menu.NONE, R.string.off);
         for (int i = 0; i < trackCount; i++) {
             menu.add(MENU_GROUP_TRACKS, i + ID_OFFSET, Menu.NONE,
-                    buildTrackName(player.getTrackFormat(trackType, i)));
+                    buildTrackName(mMediaSDKService.getTrackFormat(trackType, i)));
         }
         menu.setGroupCheckable(MENU_GROUP_TRACKS, true, true);
-        menu.findItem(player.getSelectedTrack(trackType) + ID_OFFSET).setChecked(true);
+        menu.findItem(mMediaSDKService.getSelectedTrack(trackType) + ID_OFFSET).setChecked(true);
     }*/
 
     private static String buildTrackName(MediaFormat format) {
@@ -455,23 +441,23 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     }
 
     private boolean onTrackItemClick(MenuItem item, int type) {
-        if (player == null || item.getGroupId() != MENU_GROUP_TRACKS) {
+        if (mMediaSDKService == null || item.getGroupId() != MENU_GROUP_TRACKS) {
             return false;
         }
-        player.setSelectedTrack(type, item.getItemId() - ID_OFFSET);
+        mMediaSDKService.setSelectedTrack(type, item.getItemId() - ID_OFFSET);
         return true;
     }
 
     private void toggleControlsVisibility()  {
-        if (player.isControlsVisble()) {
-            player.hideControls();
+        if (mMediaSDKService.isControlsVisble()) {
+            mMediaSDKService.hideControls();
         } else {
             showControls();
         }
     }
 
     private void showControls() {
-        player.showControls();
+        mMediaSDKService.showControls();
     }
 
     // DemoPlayer.CaptionListener implementation
@@ -507,8 +493,8 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        if (player != null) {
-            player.setSurface(holder.getSurface());
+        if (mMediaSDKService != null) {
+            mMediaSDKService.setVideoSurface(holder.getSurface());
         }
     }
 
@@ -519,8 +505,8 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        if (player != null) {
-            player.blockingClearSurface();
+        if (mMediaSDKService != null) {
+            mMediaSDKService.blockingClearSurface();
         }
     }
 

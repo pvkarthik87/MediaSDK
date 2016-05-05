@@ -59,6 +59,8 @@ import java.util.Locale;
                           + "84308FF04844498CE6FBCE4731507882B8307798&key=ik0", Util.TYPE_DASH),
           new Sample("Smurfs",
                   "http://demo.unified-streaming.com/video/smurfs/smurfs.ism/smurfs.mpd", Util.TYPE_DASH),
+          new Sample("Smurfs Fixed",
+                  "http://demo.unified-streaming.com/video/smurfs/smurfs.ism/smurfs.mpd", Util.TYPE_DASH),
   };
 
   public static final Sample[] YOUTUBE_DASH_WEBM = new Sample[] {
@@ -122,6 +124,9 @@ import java.util.Locale;
   };
 
   public static final Sample[] WIDEVINE_H264_MP4_CLEAR = new Sample[] {
+    new Sample("WV: Clear SD & HD (MP4,H264) Fixed",
+            "https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd",
+            Util.TYPE_DASH),
     new Sample("WV: Clear SD & HD (MP4,H264)",
         "https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd",
         Util.TYPE_DASH),

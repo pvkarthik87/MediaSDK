@@ -217,6 +217,8 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     private InfoListener mInfoListener;
     private MediaController mMediaController;
     private Context mCtx;
+    private boolean mIsAdaptable = true;
+    private long mMaxBitrate;
 
     public MediaSDKService(Context ctx) {
         mCtx = ctx;
@@ -240,7 +242,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         mMediaController.setEnabled(true);
     }
 
-    public MediaSDKService(Context ctx, RendererBuilder rendererBuilder) {
+    /*public MediaSDKService(Context ctx, RendererBuilder rendererBuilder) {
         this.mCurrRendererBuilder = rendererBuilder;
         mExoPlayer = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
         mExoPlayer.addListener(this);
@@ -260,7 +262,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         mMediaController = new KeyCompatibleMediaController(ctx);
         mMediaController.setMediaPlayer(mPlayerControl);
         mMediaController.setEnabled(true);
-    }
+    }*/
 
     public PlayerControl getPlayerControl() {
         return mPlayerControl;
@@ -290,7 +292,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         mId3MetadataListener = listener;
     }
 
-    public void setSurface(Surface surface) {
+    public void setVideoSurface(Surface surface) {
         this.mSurface = surface;
         pushSurface(false);
     }
@@ -660,15 +662,21 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     }
 
     // Internal methods
-    public static RendererBuilder getRendererBuilder(Context ctx, int contentType, Uri contentUri, MediaDrmCallback mediaDrmCallback) {
+    private RendererBuilder getRendererBuilder(Context ctx, int contentType, Uri contentUri, MediaDrmCallback mediaDrmCallback) {
         String userAgent = Util.getUserAgent(ctx, "MediaSDKService");
         switch (contentType) {
             case Util.TYPE_SS:
                 return new SmoothStreamingRendererBuilder(ctx, userAgent, contentUri.toString(),
                         mediaDrmCallback);
             case Util.TYPE_DASH:
-                return new DashRendererBuilder(ctx, userAgent, contentUri.toString(),
-                        mediaDrmCallback);
+                if(mIsAdaptable) {
+                    return new DashRendererBuilder(ctx, userAgent, contentUri.toString(),
+                            mediaDrmCallback);
+                }
+                else {
+                    return new DashRendererBuilder(ctx, userAgent, contentUri.toString(),
+                            mediaDrmCallback, mMaxBitrate);
+                }
             case Util.TYPE_HLS:
                 return new HlsRendererBuilder(ctx, userAgent, contentUri.toString());
             case Util.TYPE_OTHER:
@@ -684,22 +692,22 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     }
 
     public int setAnchorView(View view) {
-        if(view == null) return -1;
-        if(mMediaController == null) return -2;
+        if(view == null) return Constants.ErrorCodes.INVALID_PARAM;
+        if(mMediaController == null) return Constants.ErrorCodes.UNKNOWN_ERROR;
         mMediaController.setAnchorView(view);
-        return 0;
+        return Constants.ErrorCodes.SUCCESS;
     }
 
     public int showControls() {
-        if(mMediaController == null) return -2;
+        if(mMediaController == null) return Constants.ErrorCodes.UNKNOWN_ERROR;
         mMediaController.show(0);
-        return 0;
+        return Constants.ErrorCodes.SUCCESS;
     }
 
     public int hideControls() {
-        if(mMediaController == null) return -2;
+        if(mMediaController == null) return Constants.ErrorCodes.UNKNOWN_ERROR;
         mMediaController.hide();
-        return 0;
+        return Constants.ErrorCodes.SUCCESS;
     }
 
     public boolean isControlsVisble() {
@@ -707,9 +715,19 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         return mMediaController.isShowing();
     }
 
-    public int startStreaming(int contentType, Uri contentUri, MediaDrmCallback mediaDrmCallback) {
+    public int setDataSource(int contentType, Uri contentUri, MediaDrmCallback mediaDrmCallback) {
         mCurrRendererBuilder = getRendererBuilder(mCtx, contentType, contentUri, mediaDrmCallback);
-        return 0;
+        return Constants.ErrorCodes.SUCCESS;
+    }
+
+    public int setAdaptiveEnabled(boolean enabled) {
+        mIsAdaptable = enabled;
+        return Constants.ErrorCodes.SUCCESS;
+    }
+
+    public int setBitrate(long bitrate) {
+        mMaxBitrate = bitrate;
+        return Constants.ErrorCodes.SUCCESS;
     }
 
     private static final class KeyCompatibleMediaController extends MediaController {
