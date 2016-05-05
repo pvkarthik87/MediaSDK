@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.kar.mediaservice.player;
+package com.kar.mediaservice.renderers;
 
 import android.content.Context;
 import android.media.AudioManager;
@@ -46,6 +46,7 @@ import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.upstream.DefaultUriDataSource;
 import com.google.android.exoplayer.util.ManifestFetcher;
 import com.google.android.exoplayer.util.ManifestFetcher.ManifestCallback;
+import com.kar.mediaservice.MediaSDKService;
 
 import java.io.IOException;
 import java.util.List;

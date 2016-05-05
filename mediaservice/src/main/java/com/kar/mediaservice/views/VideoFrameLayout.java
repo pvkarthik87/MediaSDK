@@ -1,4 +1,4 @@
-package com.kar.mediaservice.player;
+package com.kar.mediaservice.views;
 
 import android.content.Context;
 import android.util.AttributeSet;
@@ -9,17 +9,17 @@ import com.google.android.exoplayer.AspectRatioFrameLayout;
 /**
  * Created by Karthik on 5/3/2016.
  */
-public class VideoPlayer extends FrameLayout {
+public class VideoFrameLayout extends FrameLayout {
 
     private static final float MAX_ASPECT_RATIO_DEFORMATION_FRACTION = 0.01f;
 
     private float videoAspectRatio;
 
-    public VideoPlayer(Context context) {
+    public VideoFrameLayout(Context context) {
         super(context);
     }
 
-    public VideoPlayer(Context context, AttributeSet attrs) {
+    public VideoFrameLayout(Context context, AttributeSet attrs) {
         super(context, attrs);
     }
 

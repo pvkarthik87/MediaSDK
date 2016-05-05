@@ -1,4 +1,4 @@
-package com.kar.mediaservice.player;
+package com.kar.mediaservice.renderers;
 
 import android.content.Context;
 import android.media.AudioManager;
@@ -19,6 +19,7 @@ import com.google.android.exoplayer.upstream.DataSource;
 import com.google.android.exoplayer.upstream.DefaultAllocator;
 import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.upstream.DefaultUriDataSource;
+import com.kar.mediaservice.MediaSDKService;
 
 /**
  * A {@link RendererBuilder} for streams that can be read using an {@link Extractor}.

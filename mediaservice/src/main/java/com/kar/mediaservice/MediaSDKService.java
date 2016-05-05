@@ -1,11 +1,14 @@
-package com.kar.mediaservice.player;
+package com.kar.mediaservice;
 
 import android.content.Context;
 import android.media.MediaCodec;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.KeyEvent;
 import android.view.Surface;
+import android.view.View;
+import android.widget.MediaController;
 
 import com.google.android.exoplayer.CodecCounters;
 import com.google.android.exoplayer.DummyTrackRenderer;
@@ -35,6 +38,10 @@ import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.util.DebugTextViewHelper;
 import com.google.android.exoplayer.util.PlayerControl;
 import com.google.android.exoplayer.util.Util;
+import com.kar.mediaservice.renderers.DashRendererBuilder;
+import com.kar.mediaservice.renderers.ExtractorRendererBuilder;
+import com.kar.mediaservice.renderers.HlsRendererBuilder;
+import com.kar.mediaservice.renderers.SmoothStreamingRendererBuilder;
 
 import java.io.IOException;
 import java.net.CookieHandler;
@@ -62,13 +69,13 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         MetadataTrackRenderer.MetadataRenderer<List<Id3Frame>>, DebugTextViewHelper.Provider {
 
     /**
-     * Builds renderers for the player.
+     * Builds renderers for the mExoPlayer.
      */
     public interface RendererBuilder {
         /**
          * Builds renderers for playback.
          *
-         * @param player The player for which renderers are being built. {@link MediaSDKService#onRenderers}
+         * @param player The mExoPlayer for which renderers are being built. {@link MediaSDKService#onRenderers}
          *               should be invoked once the renderers have been built. If building fails,
          *               {@link MediaSDKService#onRenderersError} should be invoked.
          */
@@ -78,7 +85,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
          * Cancels the current build operation, if there is one. Else does nothing.
          * <p/>
          * A canceled build operation must not invoke {@link MediaSDKService#onRenderers} or
-         * {@link MediaSDKService#onRenderersError} on the player, which may have been released.
+         * {@link MediaSDKService#onRenderersError} on the mExoPlayer, which may have been released.
          */
         void cancel();
     }
@@ -100,7 +107,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
      * <p/>
      * These errors are not visible to the user, and hence this listener is provided for
      * informational purposes only. Note however that an internal error may cause a fatal
-     * error if the player fails to recover. If this happens, {@link Listener#onError(Exception)}
+     * error if the mExoPlayer fails to recover. If this happens, {@link Listener#onError(Exception)}
      * will be invoked.
      */
     public interface InternalErrorListener {
@@ -185,137 +192,165 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
         defaultCookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
     }
 
-    private final RendererBuilder rendererBuilder;
-    private final ExoPlayer player;
-    private final PlayerControl playerControl;
-    private final Handler mainHandler;
-    private final CopyOnWriteArrayList<Listener> listeners;
+    private RendererBuilder mCurrRendererBuilder;
+    private final ExoPlayer mExoPlayer;
+    private final PlayerControl mPlayerControl;
+    private final Handler mMainHandler;
+    private final CopyOnWriteArrayList<Listener> mListeners;
 
-    private int rendererBuildingState;
-    private int lastReportedPlaybackState;
-    private boolean lastReportedPlayWhenReady;
+    private int mCurrRendererBuildingState;
+    private int mLastReportedPlaybackState;
+    private boolean mLastReportedPlayWhenReady;
 
-    private Surface surface;
-    private TrackRenderer videoRenderer;
-    private CodecCounters codecCounters;
-    private Format videoFormat;
-    private int videoTrackToRestore;
+    private Surface mSurface;
+    private TrackRenderer mVideoRenderer;
+    private CodecCounters mCodecCounters;
+    private Format VvideoFormat;
+    private int mVideoTrackToRestore;
 
-    private BandwidthMeter bandwidthMeter;
-    private boolean backgrounded;
+    private BandwidthMeter mBandwidthMeter;
+    private boolean mBackgrounded;
 
-    private CaptionListener captionListener;
-    private Id3MetadataListener id3MetadataListener;
-    private InternalErrorListener internalErrorListener;
-    private InfoListener infoListener;
+    private CaptionListener mCaptionListener;
+    private Id3MetadataListener mId3MetadataListener;
+    private InternalErrorListener mInternalErrorListener;
+    private InfoListener mInfoListener;
+    private MediaController mMediaController;
+    private Context mCtx;
 
-    public MediaSDKService(RendererBuilder rendererBuilder) {
-        this.rendererBuilder = rendererBuilder;
-        player = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
-        player.addListener(this);
-        playerControl = new PlayerControl(player);
-        mainHandler = new Handler();
-        listeners = new CopyOnWriteArrayList<>();
-        lastReportedPlaybackState = STATE_IDLE;
-        rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
+    public MediaSDKService(Context ctx) {
+        mCtx = ctx;
+        mExoPlayer = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
+        mExoPlayer.addListener(this);
+        mPlayerControl = new PlayerControl(mExoPlayer);
+        mMainHandler = new Handler();
+        mListeners = new CopyOnWriteArrayList<>();
+        mLastReportedPlaybackState = STATE_IDLE;
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
         // Disable text initially.
-        player.setSelectedTrack(TYPE_TEXT, TRACK_DISABLED);
+        mExoPlayer.setSelectedTrack(TYPE_TEXT, TRACK_DISABLED);
 
         CookieHandler currentHandler = CookieHandler.getDefault();
         if (currentHandler != defaultCookieManager) {
             CookieHandler.setDefault(defaultCookieManager);
         }
+
+        mMediaController = new KeyCompatibleMediaController(ctx);
+        mMediaController.setMediaPlayer(mPlayerControl);
+        mMediaController.setEnabled(true);
+    }
+
+    public MediaSDKService(Context ctx, RendererBuilder rendererBuilder) {
+        this.mCurrRendererBuilder = rendererBuilder;
+        mExoPlayer = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
+        mExoPlayer.addListener(this);
+        mPlayerControl = new PlayerControl(mExoPlayer);
+        mMainHandler = new Handler();
+        mListeners = new CopyOnWriteArrayList<>();
+        mLastReportedPlaybackState = STATE_IDLE;
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
+        // Disable text initially.
+        mExoPlayer.setSelectedTrack(TYPE_TEXT, TRACK_DISABLED);
+
+        CookieHandler currentHandler = CookieHandler.getDefault();
+        if (currentHandler != defaultCookieManager) {
+            CookieHandler.setDefault(defaultCookieManager);
+        }
+
+        mMediaController = new KeyCompatibleMediaController(ctx);
+        mMediaController.setMediaPlayer(mPlayerControl);
+        mMediaController.setEnabled(true);
     }
 
     public PlayerControl getPlayerControl() {
-        return playerControl;
+        return mPlayerControl;
     }
 
     public void addListener(Listener listener) {
-        listeners.add(listener);
+        mListeners.add(listener);
     }
 
     public void removeListener(Listener listener) {
-        listeners.remove(listener);
+        mListeners.remove(listener);
     }
 
     public void setInternalErrorListener(InternalErrorListener listener) {
-        internalErrorListener = listener;
+        mInternalErrorListener = listener;
     }
 
     public void setInfoListener(InfoListener listener) {
-        infoListener = listener;
+        mInfoListener = listener;
     }
 
     public void setCaptionListener(CaptionListener listener) {
-        captionListener = listener;
+        mCaptionListener = listener;
     }
 
     public void setMetadataListener(Id3MetadataListener listener) {
-        id3MetadataListener = listener;
+        mId3MetadataListener = listener;
     }
 
     public void setSurface(Surface surface) {
-        this.surface = surface;
+        this.mSurface = surface;
         pushSurface(false);
     }
 
     public Surface getSurface() {
-        return surface;
+        return mSurface;
     }
 
     public void blockingClearSurface() {
-        surface = null;
+        mSurface = null;
         pushSurface(true);
     }
 
     public int getTrackCount(int type) {
-        return player.getTrackCount(type);
+        return mExoPlayer.getTrackCount(type);
     }
 
     public MediaFormat getTrackFormat(int type, int index) {
-        return player.getTrackFormat(type, index);
+        return mExoPlayer.getTrackFormat(type, index);
     }
 
     public int getSelectedTrack(int type) {
-        return player.getSelectedTrack(type);
+        return mExoPlayer.getSelectedTrack(type);
     }
 
     public void setSelectedTrack(int type, int index) {
-        player.setSelectedTrack(type, index);
-        if (type == TYPE_TEXT && index < 0 && captionListener != null) {
-            captionListener.onCues(Collections.<Cue>emptyList());
+        mExoPlayer.setSelectedTrack(type, index);
+        if (type == TYPE_TEXT && index < 0 && mCaptionListener != null) {
+            mCaptionListener.onCues(Collections.<Cue>emptyList());
         }
     }
 
     public boolean getBackgrounded() {
-        return backgrounded;
+        return mBackgrounded;
     }
 
     public void setBackgrounded(boolean backgrounded) {
-        if (this.backgrounded == backgrounded) {
+        if (this.mBackgrounded == backgrounded) {
             return;
         }
-        this.backgrounded = backgrounded;
+        this.mBackgrounded = backgrounded;
         if (backgrounded) {
-            videoTrackToRestore = getSelectedTrack(TYPE_VIDEO);
+            mVideoTrackToRestore = getSelectedTrack(TYPE_VIDEO);
             setSelectedTrack(TYPE_VIDEO, TRACK_DISABLED);
             blockingClearSurface();
         } else {
-            setSelectedTrack(TYPE_VIDEO, videoTrackToRestore);
+            setSelectedTrack(TYPE_VIDEO, mVideoTrackToRestore);
         }
     }
 
     public void prepare() {
-        if (rendererBuildingState == RENDERER_BUILDING_STATE_BUILT) {
-            player.stop();
+        if (mCurrRendererBuildingState == RENDERER_BUILDING_STATE_BUILT) {
+            mExoPlayer.stop();
         }
-        rendererBuilder.cancel();
-        videoFormat = null;
-        videoRenderer = null;
-        rendererBuildingState = RENDERER_BUILDING_STATE_BUILDING;
+        mCurrRendererBuilder.cancel();
+        VvideoFormat = null;
+        mVideoRenderer = null;
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_BUILDING;
         maybeReportPlayerState();
-        rendererBuilder.buildRenderers(this);
+        mCurrRendererBuilder.buildRenderers(this);
     }
 
     /**
@@ -325,7 +360,7 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
      *                       element may be null if there do not exist tracks of the corresponding type.
      * @param bandwidthMeter Provides an estimate of the currently available bandwidth. May be null.
      */
-  /* package */ void onRenderers(TrackRenderer[] renderers, BandwidthMeter bandwidthMeter) {
+    public void onRenderers(TrackRenderer[] renderers, BandwidthMeter bandwidthMeter) {
         for (int i = 0; i < RENDERER_COUNT; i++) {
             if (renderers[i] == null) {
                 // Convert a null renderer to a dummy renderer.
@@ -333,15 +368,15 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
             }
         }
         // Complete preparation.
-        this.videoRenderer = renderers[TYPE_VIDEO];
-        this.codecCounters = videoRenderer instanceof MediaCodecTrackRenderer
-                ? ((MediaCodecTrackRenderer) videoRenderer).codecCounters
+        this.mVideoRenderer = renderers[TYPE_VIDEO];
+        this.mCodecCounters = mVideoRenderer instanceof MediaCodecTrackRenderer
+                ? ((MediaCodecTrackRenderer) mVideoRenderer).codecCounters
                 : renderers[TYPE_AUDIO] instanceof MediaCodecTrackRenderer
                 ? ((MediaCodecTrackRenderer) renderers[TYPE_AUDIO]).codecCounters : null;
-        this.bandwidthMeter = bandwidthMeter;
+        this.mBandwidthMeter = bandwidthMeter;
         pushSurface(false);
-        player.prepare(renderers);
-        rendererBuildingState = RENDERER_BUILDING_STATE_BUILT;
+        mExoPlayer.prepare(renderers);
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_BUILT;
     }
 
     /**
@@ -349,40 +384,40 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
      *
      * @param e Describes the error.
      */
-  /* package */ void onRenderersError(Exception e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onRendererInitializationError(e);
+    public  void onRenderersError(Exception e) {
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onRendererInitializationError(e);
         }
-        for (Listener listener : listeners) {
+        for (Listener listener : mListeners) {
             listener.onError(e);
         }
-        rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
         maybeReportPlayerState();
     }
 
     public void setPlayWhenReady(boolean playWhenReady) {
-        player.setPlayWhenReady(playWhenReady);
+        mExoPlayer.setPlayWhenReady(playWhenReady);
     }
 
     public void seekTo(long positionMs) {
-        player.seekTo(positionMs);
+        mExoPlayer.seekTo(positionMs);
     }
 
     public void release() {
-        rendererBuilder.cancel();
-        rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
-        surface = null;
-        player.release();
+        mCurrRendererBuilder.cancel();
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
+        mSurface = null;
+        mExoPlayer.release();
     }
 
     public int getPlaybackState() {
-        if (rendererBuildingState == RENDERER_BUILDING_STATE_BUILDING) {
+        if (mCurrRendererBuildingState == RENDERER_BUILDING_STATE_BUILDING) {
             return STATE_PREPARING;
         }
-        int playerState = player.getPlaybackState();
-        if (rendererBuildingState == RENDERER_BUILDING_STATE_BUILT && playerState == STATE_IDLE) {
+        int playerState = mExoPlayer.getPlaybackState();
+        if (mCurrRendererBuildingState == RENDERER_BUILDING_STATE_BUILT && playerState == STATE_IDLE) {
             // This is an edge case where the renderers are built, but are still being passed to the
-            // player's playback thread.
+            // mExoPlayer's playback thread.
             return STATE_PREPARING;
         }
         return playerState;
@@ -390,42 +425,42 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
 
     @Override
     public Format getFormat() {
-        return videoFormat;
+        return VvideoFormat;
     }
 
     @Override
     public BandwidthMeter getBandwidthMeter() {
-        return bandwidthMeter;
+        return mBandwidthMeter;
     }
 
     @Override
     public CodecCounters getCodecCounters() {
-        return codecCounters;
+        return mCodecCounters;
     }
 
     @Override
     public long getCurrentPosition() {
-        return player.getCurrentPosition();
+        return mExoPlayer.getCurrentPosition();
     }
 
     public long getDuration() {
-        return player.getDuration();
+        return mExoPlayer.getDuration();
     }
 
     public int getBufferedPercentage() {
-        return player.getBufferedPercentage();
+        return mExoPlayer.getBufferedPercentage();
     }
 
     public boolean getPlayWhenReady() {
-        return player.getPlayWhenReady();
+        return mExoPlayer.getPlayWhenReady();
     }
 
-    /* package */ Looper getPlaybackLooper() {
-        return player.getPlaybackLooper();
+    public  Looper getPlaybackLooper() {
+        return mExoPlayer.getPlaybackLooper();
     }
 
-    /* package */ Handler getMainHandler() {
-        return mainHandler;
+    public  Handler getMainHandler() {
+        return mMainHandler;
     }
 
     @Override
@@ -435,8 +470,8 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
 
     @Override
     public void onPlayerError(ExoPlaybackException exception) {
-        rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
-        for (Listener listener : listeners) {
+        mCurrRendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
+        for (Listener listener : mListeners) {
             listener.onError(exception);
         }
     }
@@ -444,36 +479,36 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     @Override
     public void onVideoSizeChanged(int width, int height, int unappliedRotationDegrees,
                                    float pixelWidthHeightRatio) {
-        for (Listener listener : listeners) {
+        for (Listener listener : mListeners) {
             listener.onVideoSizeChanged(width, height, unappliedRotationDegrees, pixelWidthHeightRatio);
         }
     }
 
     @Override
     public void onDroppedFrames(int count, long elapsed) {
-        if (infoListener != null) {
-            infoListener.onDroppedFrames(count, elapsed);
+        if (mInfoListener != null) {
+            mInfoListener.onDroppedFrames(count, elapsed);
         }
     }
 
     @Override
     public void onBandwidthSample(int elapsedMs, long bytes, long bitrateEstimate) {
-        if (infoListener != null) {
-            infoListener.onBandwidthSample(elapsedMs, bytes, bitrateEstimate);
+        if (mInfoListener != null) {
+            mInfoListener.onBandwidthSample(elapsedMs, bytes, bitrateEstimate);
         }
     }
 
     @Override
     public void onDownstreamFormatChanged(int sourceId, Format format, int trigger,
                                           long mediaTimeMs) {
-        if (infoListener == null) {
+        if (mInfoListener == null) {
             return;
         }
         if (sourceId == TYPE_VIDEO) {
-            videoFormat = format;
-            infoListener.onVideoFormatEnabled(format, trigger, mediaTimeMs);
+            VvideoFormat = format;
+            mInfoListener.onVideoFormatEnabled(format, trigger, mediaTimeMs);
         } else if (sourceId == TYPE_AUDIO) {
-            infoListener.onAudioFormatEnabled(format, trigger, mediaTimeMs);
+            mInfoListener.onAudioFormatEnabled(format, trigger, mediaTimeMs);
         }
     }
 
@@ -484,79 +519,79 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
 
     @Override
     public void onDrmSessionManagerError(Exception e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onDrmSessionManagerError(e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onDrmSessionManagerError(e);
         }
     }
 
     @Override
     public void onDecoderInitializationError(MediaCodecTrackRenderer.DecoderInitializationException e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onDecoderInitializationError(e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onDecoderInitializationError(e);
         }
     }
 
     @Override
     public void onAudioTrackInitializationError(AudioTrack.InitializationException e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onAudioTrackInitializationError(e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onAudioTrackInitializationError(e);
         }
     }
 
     @Override
     public void onAudioTrackWriteError(AudioTrack.WriteException e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onAudioTrackWriteError(e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onAudioTrackWriteError(e);
         }
     }
 
     @Override
     public void onAudioTrackUnderrun(int bufferSize, long bufferSizeMs, long elapsedSinceLastFeedMs) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onAudioTrackUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onAudioTrackUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs);
         }
     }
 
     @Override
     public void onCryptoError(MediaCodec.CryptoException e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onCryptoError(e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onCryptoError(e);
         }
     }
 
     @Override
     public void onDecoderInitialized(String decoderName, long elapsedRealtimeMs,
                                      long initializationDurationMs) {
-        if (infoListener != null) {
-            infoListener.onDecoderInitialized(decoderName, elapsedRealtimeMs, initializationDurationMs);
+        if (mInfoListener != null) {
+            mInfoListener.onDecoderInitialized(decoderName, elapsedRealtimeMs, initializationDurationMs);
         }
     }
 
     @Override
     public void onLoadError(int sourceId, IOException e) {
-        if (internalErrorListener != null) {
-            internalErrorListener.onLoadError(sourceId, e);
+        if (mInternalErrorListener != null) {
+            mInternalErrorListener.onLoadError(sourceId, e);
         }
     }
 
     @Override
     public void onCues(List<Cue> cues) {
-        if (captionListener != null && getSelectedTrack(TYPE_TEXT) != TRACK_DISABLED) {
-            captionListener.onCues(cues);
+        if (mCaptionListener != null && getSelectedTrack(TYPE_TEXT) != TRACK_DISABLED) {
+            mCaptionListener.onCues(cues);
         }
     }
 
     @Override
     public void onMetadata(List<Id3Frame> id3Frames) {
-        if (id3MetadataListener != null && getSelectedTrack(TYPE_METADATA) != TRACK_DISABLED) {
-            id3MetadataListener.onId3Metadata(id3Frames);
+        if (mId3MetadataListener != null && getSelectedTrack(TYPE_METADATA) != TRACK_DISABLED) {
+            mId3MetadataListener.onId3Metadata(id3Frames);
         }
     }
 
     @Override
     public void onAvailableRangeChanged(int sourceId, TimeRange availableRange) {
-        if (infoListener != null) {
-            infoListener.onAvailableRangeChanged(sourceId, availableRange);
+        if (mInfoListener != null) {
+            mInfoListener.onAvailableRangeChanged(sourceId, availableRange);
         }
     }
 
@@ -573,8 +608,8 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     @Override
     public void onLoadStarted(int sourceId, long length, int type, int trigger, Format format,
                               long mediaStartTimeMs, long mediaEndTimeMs) {
-        if (infoListener != null) {
-            infoListener.onLoadStarted(sourceId, length, type, trigger, format, mediaStartTimeMs,
+        if (mInfoListener != null) {
+            mInfoListener.onLoadStarted(sourceId, length, type, trigger, format, mediaStartTimeMs,
                     mediaEndTimeMs);
         }
     }
@@ -582,8 +617,8 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     @Override
     public void onLoadCompleted(int sourceId, long bytesLoaded, int type, int trigger, Format format,
                                 long mediaStartTimeMs, long mediaEndTimeMs, long elapsedRealtimeMs, long loadDurationMs) {
-        if (infoListener != null) {
-            infoListener.onLoadCompleted(sourceId, bytesLoaded, type, trigger, format, mediaStartTimeMs,
+        if (mInfoListener != null) {
+            mInfoListener.onLoadCompleted(sourceId, bytesLoaded, type, trigger, format, mediaStartTimeMs,
                     mediaEndTimeMs, elapsedRealtimeMs, loadDurationMs);
         }
     }
@@ -599,28 +634,28 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
     }
 
     private void maybeReportPlayerState() {
-        boolean playWhenReady = player.getPlayWhenReady();
+        boolean playWhenReady = mExoPlayer.getPlayWhenReady();
         int playbackState = getPlaybackState();
-        if (lastReportedPlayWhenReady != playWhenReady || lastReportedPlaybackState != playbackState) {
-            for (Listener listener : listeners) {
+        if (mLastReportedPlayWhenReady != playWhenReady || mLastReportedPlaybackState != playbackState) {
+            for (Listener listener : mListeners) {
                 listener.onStateChanged(playWhenReady, playbackState);
             }
-            lastReportedPlayWhenReady = playWhenReady;
-            lastReportedPlaybackState = playbackState;
+            mLastReportedPlayWhenReady = playWhenReady;
+            mLastReportedPlaybackState = playbackState;
         }
     }
 
     private void pushSurface(boolean blockForSurfacePush) {
-        if (videoRenderer == null) {
+        if (mVideoRenderer == null) {
             return;
         }
 
         if (blockForSurfacePush) {
-            player.blockingSendMessage(
-                    videoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, surface);
+            mExoPlayer.blockingSendMessage(
+                    mVideoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, mSurface);
         } else {
-            player.sendMessage(
-                    videoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, surface);
+            mExoPlayer.sendMessage(
+                    mVideoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, mSurface);
         }
     }
 
@@ -640,6 +675,74 @@ public class MediaSDKService implements ExoPlayer.Listener, ChunkSampleSource.Ev
                 return new ExtractorRendererBuilder(ctx, userAgent, contentUri);
             default:
                 throw new IllegalStateException("Unsupported type: " + contentType);
+        }
+    }
+
+    public boolean onKeyEvent(KeyEvent event) {
+        if(event == null) return false;
+        return mMediaController.dispatchKeyEvent(event);
+    }
+
+    public int setAnchorView(View view) {
+        if(view == null) return -1;
+        if(mMediaController == null) return -2;
+        mMediaController.setAnchorView(view);
+        return 0;
+    }
+
+    public int showControls() {
+        if(mMediaController == null) return -2;
+        mMediaController.show(0);
+        return 0;
+    }
+
+    public int hideControls() {
+        if(mMediaController == null) return -2;
+        mMediaController.hide();
+        return 0;
+    }
+
+    public boolean isControlsVisble() {
+        if(mMediaController == null) return false;
+        return mMediaController.isShowing();
+    }
+
+    public int startStreaming(int contentType, Uri contentUri, MediaDrmCallback mediaDrmCallback) {
+        mCurrRendererBuilder = getRendererBuilder(mCtx, contentType, contentUri, mediaDrmCallback);
+        return 0;
+    }
+
+    private static final class KeyCompatibleMediaController extends MediaController {
+
+        private MediaController.MediaPlayerControl playerControl;
+
+        public KeyCompatibleMediaController(Context context) {
+            super(context);
+        }
+
+        @Override
+        public void setMediaPlayer(MediaController.MediaPlayerControl playerControl) {
+            super.setMediaPlayer(playerControl);
+            this.playerControl = playerControl;
+        }
+
+        @Override
+        public boolean dispatchKeyEvent(KeyEvent event) {
+            int keyCode = event.getKeyCode();
+            if (playerControl.canSeekForward() && keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    playerControl.seekTo(playerControl.getCurrentPosition() + 15000); // milliseconds
+                    show();
+                }
+                return true;
+            } else if (playerControl.canSeekBackward() && keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    playerControl.seekTo(playerControl.getCurrentPosition() - 5000); // milliseconds
+                    show();
+                }
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
         }
     }
 }

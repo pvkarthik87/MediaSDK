@@ -9,15 +9,12 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
-import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.accessibility.CaptioningManager;
-import android.widget.MediaController;
-import android.widget.PopupMenu;
 import android.widget.Toast;
 
 import com.google.android.exoplayer.AspectRatioFrameLayout;
@@ -26,7 +23,6 @@ import com.google.android.exoplayer.ExoPlayer;
 import com.google.android.exoplayer.MediaCodecTrackRenderer;
 import com.google.android.exoplayer.MediaCodecUtil;
 import com.google.android.exoplayer.MediaFormat;
-import com.google.android.exoplayer.audio.AudioCapabilitiesReceiver;
 import com.google.android.exoplayer.drm.MediaDrmCallback;
 import com.google.android.exoplayer.drm.UnsupportedDrmException;
 import com.google.android.exoplayer.metadata.id3.GeobFrame;
@@ -36,15 +32,11 @@ import com.google.android.exoplayer.metadata.id3.TxxxFrame;
 import com.google.android.exoplayer.text.CaptionStyleCompat;
 import com.google.android.exoplayer.text.Cue;
 import com.google.android.exoplayer.text.SubtitleLayout;
-import com.google.android.exoplayer.util.DebugTextViewHelper;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.Util;
-import com.google.android.exoplayer.util.VerboseLogUtil;
-import com.kar.mediaservice.player.MediaSDKService;
+import com.kar.mediaservice.MediaSDKService;
+import com.kar.mediaservice.views.VideoFrameLayout;
 
-import java.net.CookieHandler;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
 import java.util.List;
 import java.util.Locale;
 
@@ -54,11 +46,18 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     private static final int MENU_GROUP_TRACKS = 1;
     private static final int ID_OFFSET = 2;
 
+    // For use within demo app code.
+    public static final String CONTENT_ID_EXTRA = "content_id";
+    public static final String CONTENT_TYPE_EXTRA = "content_type";
+    public static final String PROVIDER_EXTRA = "provider";
+
+    // For use when launching the demo app using adb.
+    private static final String CONTENT_EXT_EXTRA = "type";
+
     private static final String TAG = "PlayerActivity";
 
-    private MediaController mediaController;
     private View shutterView;
-    private AspectRatioFrameLayout videoFrame;
+    private VideoFrameLayout videoFrame;
     private SurfaceView surfaceView;
     private SubtitleLayout subtitleLayout;
 
@@ -70,14 +69,26 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
 
     private Uri contentUri;
     private int contentType;
-    private String contentId;
+    private String contentId = Constants.DASH_SAMPLE_CONTENT_ID.toLowerCase(Locale.US).replaceAll("\\s", "");;
     private String provider;
+    private View root;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_player);
-        View root = findViewById(R.id.root);
+        root = findViewById(R.id.root);
+        /*MediaDrmCallback mediaDrmCallback = null;
+        if(contentType == Util.TYPE_DASH) {
+            mediaDrmCallback  = new WidevineTestMediaDrmCallback(contentId, provider);
+        }
+        player = new MediaSDKService(PlayerActivity.this);
+        player.addListener(this);
+        player.setCaptionListener(this);
+        player.setMetadataListener(this);
+        player.seekTo(playerPosition);
+        player.startStreaming(Util.TYPE_DASH, Uri.parse(Constants.DASH_SAMPLE_URI), mediaDrmCallback);
+        playerNeedsPrepare = true;*/
         root.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View view, MotionEvent motionEvent) {
@@ -96,20 +107,20 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
                         || keyCode == KeyEvent.KEYCODE_MENU) {
                     return false;
                 }
-                return mediaController.dispatchKeyEvent(event);
+                if(player != null) {
+                    return player.onKeyEvent(event);
+                }
+                return false;
             }
         });
 
         shutterView = findViewById(R.id.shutter);
 
-        videoFrame = (AspectRatioFrameLayout) findViewById(R.id.video_frame);
+        videoFrame = (VideoFrameLayout) findViewById(R.id.video_frame);
         surfaceView = (SurfaceView) findViewById(R.id.surface_view);
         surfaceView.getHolder().addCallback(this);
 
         subtitleLayout = (SubtitleLayout) findViewById(R.id.subtitles);
-
-        mediaController = new KeyCompatibleMediaController(this);
-        mediaController.setAnchorView(root);
     }
 
     @Override
@@ -137,10 +148,15 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
 
     private void onShown() {
         Intent intent = getIntent();
-        contentUri = Uri.parse(Constants.DASH_SAMPLE_URI);
+        contentUri = intent.getData();
+        contentType = intent.getIntExtra(CONTENT_TYPE_EXTRA,
+                inferContentType(contentUri, intent.getStringExtra(CONTENT_EXT_EXTRA)));
+        contentId = intent.getStringExtra(CONTENT_ID_EXTRA);
+        provider = intent.getStringExtra(PROVIDER_EXTRA);
+        /*contentUri = Uri.parse(Constants.DASH_SAMPLE_URI);
         contentType = Util.TYPE_DASH;
         contentId = Constants.DASH_SAMPLE_CONTENT_ID.toLowerCase(Locale.US).replaceAll("\\s", "");
-        provider = "";
+        provider = "";*/
         configureSubtitleView();
         if (player == null) {
                 preparePlayer(true);
@@ -186,14 +202,21 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
             if(contentType == Util.TYPE_DASH) {
                 mediaDrmCallback  = new WidevineTestMediaDrmCallback(contentId, provider);
             }
-            player = new MediaSDKService(MediaSDKService.getRendererBuilder(this, contentType, contentUri, mediaDrmCallback));
+            else if(contentType == Util.TYPE_SS) {
+                mediaDrmCallback  = new SmoothStreamingTestMediaDrmCallback();
+            }
+            else if(contentType == Util.TYPE_SS) {
+                mediaDrmCallback  = new SmoothStreamingTestMediaDrmCallback();
+            }
+            player = new MediaSDKService(this);
+            player.setAnchorView(root);
             player.addListener(this);
             player.setCaptionListener(this);
             player.setMetadataListener(this);
             player.seekTo(playerPosition);
+            //player.startStreaming(Util.TYPE_DASH, Uri.parse(Constants.DASH_SAMPLE_URI), mediaDrmCallback);
+            player.startStreaming(contentType, contentUri, mediaDrmCallback);
             playerNeedsPrepare = true;
-            mediaController.setMediaPlayer(player.getPlayerControl());
-            mediaController.setEnabled(true);
         }
         if (playerNeedsPrepare) {
             player.prepare();
@@ -440,15 +463,15 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
     }
 
     private void toggleControlsVisibility()  {
-        if (mediaController.isShowing()) {
-            mediaController.hide();
+        if (player.isControlsVisble()) {
+            player.hideControls();
         } else {
             showControls();
         }
     }
 
     private void showControls() {
-        mediaController.show(0);
+        player.showControls();
     }
 
     // DemoPlayer.CaptionListener implementation
@@ -541,40 +564,6 @@ public class PlayerActivity extends AppCompatActivity implements SurfaceHolder.C
         String lastPathSegment = !TextUtils.isEmpty(fileExtension) ? "." + fileExtension
                 : uri.getLastPathSegment();
         return Util.inferContentType(lastPathSegment);
-    }
-
-    private static final class KeyCompatibleMediaController extends MediaController {
-
-        private MediaController.MediaPlayerControl playerControl;
-
-        public KeyCompatibleMediaController(Context context) {
-            super(context);
-        }
-
-        @Override
-        public void setMediaPlayer(MediaController.MediaPlayerControl playerControl) {
-            super.setMediaPlayer(playerControl);
-            this.playerControl = playerControl;
-        }
-
-        @Override
-        public boolean dispatchKeyEvent(KeyEvent event) {
-            int keyCode = event.getKeyCode();
-            if (playerControl.canSeekForward() && keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    playerControl.seekTo(playerControl.getCurrentPosition() + 15000); // milliseconds
-                    show();
-                }
-                return true;
-            } else if (playerControl.canSeekBackward() && keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    playerControl.seekTo(playerControl.getCurrentPosition() - 5000); // milliseconds
-                    show();
-                }
-                return true;
-            }
-            return super.dispatchKeyEvent(event);
-        }
     }
 
 }
